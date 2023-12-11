@@ -1,12 +1,16 @@
 import os, sys
 import random
 import csv
+import math
 
 from pysimbotlib.core import Robot, Simbot, Util, PySimbotApp
 from kivy.core.window import Window
 from kivy.logger import Logger
 
+next_gen_robots = []
+
 def before_simulation(simbot: Simbot):
+    Logger.info(len(simbot.robots))
     for robot in simbot.robots:
     # random RULES value for the first generation
         if simbot.simulation_count == 0:
@@ -16,10 +20,15 @@ def before_simulation(simbot: Simbot):
                     robot.RULES[i][k] = random.randrange(256)
     # used the calculated RULES value from the previous generation
         else:
-            Logger.info("GA: copy the rules from previous generation")
-            next_gen_robots = read_rule(robot, "best_gen{0}.csv".format(simbot.simulation_count - 1))
+            Logger.info("GA: copy the rules from previous generation" + str(simbot.simulation_count - 1) + " to current generation")
+            # rule = read_rule("./best_gen{0}.csv".format(simbot.simulation_count - 1))
+            # Logger.info(rule)
+            # # for simbot_robot in simbot.robots:
+            # #     simbot_robot.RULES = rule
             for simbot_robot, robot_from_last_gen in zip(simbot.robots, next_gen_robots):
                 simbot_robot.RULES = robot_from_last_gen.RULES
+            break
+
 
 
 def after_simulation(simbot: Simbot):
@@ -34,7 +43,6 @@ def after_simulation(simbot: Simbot):
     # - simbot.robot[0].collision_count
     # - simbot.robot[0].color
     # evaluation – compute fitness values here
-    next_gen_robots = []
     for robot in simbot.robots:
         food_pos = simbot.objectives[0].pos
         robot_pos = robot.pos
@@ -42,42 +50,63 @@ def after_simulation(simbot: Simbot):
         robot.fitness = 1000 - int(distance)
         robot.fitness -= robot.collision_count
     # descending sort and rank: the best 10 will be on the list at index 0 to 9
-    fitnesslog(simbot.robots[0].fitness)
-    simbot.robots.sort(key=lambda robot: robot.fitness, reverse=True)
+    simbot.robots.sort(key=lambda robot: robot.fitness, reverse=True)    
+    # fitnesslog(simbot.robots[0].fitness)
     # empty the list
     next_gen_robots.clear()
     # adding the best to the next generation.
     next_gen_robots.append(simbot.robots[0])
-    num_robots = len(simbot.robots)
+    write_rule(simbot.robots[0], "./best_gen{0}.csv".format(simbot.simulation_count-1))
 
+    num_robots = len(simbot.robots)
+    Logger.info("GA: num_robots = " + str(num_robots))
     def select():
-        index = random.randrange(0 , 10)
+        index = random.randrange(0 ,11)
         return simbot.robots[index]
     # doing genetic operations
     for _ in range(num_robots - 1):
-        select1 = select() # design the way for selection by yourself
+        select1 = select()
         select2 = select() # design the way for selection by yourself
         while select1 == select2:
             select2 = select()
-
-        ### Here
-        # Doing crossover
-        # using next_gen_robots for temporary keep the offsprings, later they will be copy
-        # to the robots
-        next_gen_robots.append(select1)
-        #### Here
-        # Doing mutation
-        # generally scan for all next_gen_robots we have created, and with very low
-        # propability, change one byte to a new random value.
-        pass
-    # write the best rule to file
-    write_rule(simbot.robots[0], "best_gen{0}.csv".format(simbot.simulation_count))
+        # crossover
+        for i, RULE in enumerate(select1.RULES):
+            for k in range(len(RULE)):
+                if k > 8 and k < 4:
+                    select1.RULES[i][k], select2.RULES[i][k] = select2.RULES[i][k], select1.RULES[i][k]
+                ranval1 = random.random()
+                ranval2 = random.random()
+                ranrul1 = random.randrange(0,256)
+                ranrul2 = random.randrange(0,256)
+                if ranval1 < 0.3:
+                    select1.RULES[i][k] = ranrul1
+                if ranval2 < 0.3:
+                    select2.RULES[i][k] = ranrul2
+            # if ranval1 < 0.4:
+            #     select1.RULES[i]= ranrul1
+            # if ranval2 < 0.4:
+            #     select2.RULES[i]= ranrul2
+        
+        next_gen_robots.append(select2)
+        # write_rule(select, "./best_gen{0}.csv".format(simbot.simulation_count-1))
 
 def fitnesslog(fitness: float):
-    with open("fitnesslog.csv", "w") as f:
+    with open("./fitnesslog.csv", "a") as f:
         writer = csv.writer(f, lineterminator="\n")
         writer.writerows(fitness)
 
+def write_rule(robot, filename):
+    with open(filename, "a") as f:
+        writer = csv.writer(f, lineterminator="\n")
+        writer.writerows(robot.RULES)
+
+def read_rule(filename):
+    with open(filename, "r") as f:
+        reader = csv.reader(f)
+        out = [b for b in list(reader)]
+        for i in range(len(out)):
+            out[i] = [ int(j) for j in out[i] ]
+        return out
 class StupidRobot(Robot):
     RULE_LENGTH = 11
     NUM_RULES = 10
@@ -121,14 +150,14 @@ class StupidRobot(Robot):
                     if temp_val == 1: self.rules[i] *= self.smell_left()
                     elif temp_val == 2: self.rules[i] *= self.smell_center()
                     elif temp_val == 3: self.rules[i] *= self.smell_right()
-                    elif k==9: self.turns[i] = (RULE_VALUE % 181) - 90
-                    elif k==10: self.moves[i] = (RULE_VALUE % 21) - 10
-        
+                elif k==9: self.turns[i] = (RULE_VALUE % 181) - 90
+                elif k==10: self.moves[i] = (RULE_VALUE % 21) - 10            
         answerTurn = 0.0
         answerMove = 0.0
         for turn, move, rule in zip(self.turns, self.moves, self.rules):
             answerTurn += turn * rule
             answerMove += move * rule
+        
         self.turn(answerTurn)
         self.move(answerMove)
 
@@ -227,23 +256,20 @@ class StupidRobot(Robot):
         if self.target <= -45 and self.target <= 0: return 1-(-1*self.target)/45.0
         else: return 0.0
 
-def write_rule(robot, filename):
-    with open(filename, "w") as f:
-        writer = csv.writer(f, lineterminator="\n")
-        writer.writerows(robot.RULES)
 
-def read_rule(robot, filename):
-    with open(filename, "r") as f:
-        reader = csv.reader(f)
-        robot.RULES = list(reader)
 
 if __name__ == '__main__':
-    app = PySimbotApp(robot_cls = StupidRobot,
-    num_robots=100,
-    food_move_after_eat=False,
-    theme='default',
-    interval = 1.0/60.0,
-    max_tick = 250,
-    customfn_before_simulation=before_simulation,
-    customfn_after_simulation=after_simulation,
-    simulation_forever=True,)
+    try:
+        app = PySimbotApp(robot_cls = StupidRobot,
+        num_robots=100,
+        food_move_after_eat=False,
+        customfn_before_simulation=before_simulation,
+        customfn_after_simulation=after_simulation,
+        interval = 1.0/60.0,
+        max_tick = 250,
+        simulation_forever=True,)
+        app.run()
+    except Exception as e:
+        Logger.exception(e)
+    
+    
